@@ -1,93 +1,102 @@
 package com.example.student.controller;
 
-import com.example.student.entity.Student;
-import com.example.student.exception.ResourceNotFoundException;
+import com.example.student.config.SecurityConfig;
 import com.example.student.service.StudentService;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
 
-import java.util.List;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
+@WebMvcTest(StudentController.class)
+@Import(SecurityConfig.class)
 class StudentControllerTest {
 
-    @Mock
+    private static final String BODY =
+            "{\"name\":\"Akash\",\"email\":\"akash@test.com\",\"course\":\"Java\",\"age\":22}";
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
     private StudentService service;
 
-    @InjectMocks
-    private StudentController controller;
-
-    private final Student student = new Student(1L, "Akash", "akash@test.com", "Java", 22);
-
     @Test
-    void getAll_returns200WithList() {
-        when(service.getAllStudents()).thenReturn(List.of(student));
-
-        ResponseEntity<List<Student>> response = controller.getAll();
-
-        assertThat(response.getStatusCode().value()).isEqualTo(200);
-        assertThat(response.getBody()).hasSize(1);
+    void notLoggedIn_returns401() throws Exception {
+        mockMvc.perform(get("/api/students")).andExpect(status().isUnauthorized());
     }
 
     @Test
-    void getById_found_returns200() {
-        when(service.getStudentById(1L)).thenReturn(student);
-
-        ResponseEntity<Student> response = controller.getById(1L);
-
-        assertThat(response.getStatusCode().value()).isEqualTo(200);
-        assertThat(response.getBody().getName()).isEqualTo("Akash");
+    @WithMockUser(authorities = "student:read")
+    void read_withReadPermission_returns200() throws Exception {
+        mockMvc.perform(get("/api/students")).andExpect(status().isOk());
     }
 
     @Test
-    void getById_notFound_throwsException() {
-        when(service.getStudentById(99L)).thenThrow(new ResourceNotFoundException("not found"));
-
-        assertThatThrownBy(() -> controller.getById(99L))
-                .isInstanceOf(ResourceNotFoundException.class);
+    @WithMockUser(authorities = "student:create")
+    void create_withCreatePermission_returns201() throws Exception {
+        mockMvc.perform(post("/api/students").with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isCreated());
     }
 
     @Test
-    void create_returns201() {
-        when(service.createStudent(student)).thenReturn(student);
+    @WithMockUser(authorities = "student:read")
+    void create_withOnlyReadPermission_returns403() throws Exception {
+        mockMvc.perform(post("/api/students").with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isForbidden());
 
-        ResponseEntity<Student> response = controller.create(student);
-
-        assertThat(response.getStatusCode().value()).isEqualTo(201);
-        assertThat(response.getBody().getId()).isEqualTo(1L);
+        verify(service, never()).createStudent(any());
     }
 
     @Test
-    void create_duplicateEmail_throwsException() {
-        when(service.createStudent(student)).thenThrow(new IllegalArgumentException("duplicate"));
-
-        assertThatThrownBy(() -> controller.create(student))
-                .isInstanceOf(IllegalArgumentException.class);
+    @WithMockUser(authorities = "student:create")
+    void create_withoutCsrfToken_returns403() throws Exception {
+        mockMvc.perform(post("/api/students")
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isForbidden());
     }
 
     @Test
-    void update_returns200() {
-        when(service.updateStudent(1L, student)).thenReturn(student);
-
-        ResponseEntity<Student> response = controller.update(1L, student);
-
-        assertThat(response.getStatusCode().value()).isEqualTo(200);
+    @WithMockUser(authorities = "student:read")
+    void update_withOnlyReadPermission_returns403() throws Exception {
+        mockMvc.perform(put("/api/students/1").with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isForbidden());
     }
 
     @Test
-    void delete_returns204() {
-        ResponseEntity<Void> response = controller.delete(1L);
+    @WithMockUser(authorities = "student:delete")
+    void delete_withDeletePermission_returns204() throws Exception {
+        mockMvc.perform(delete("/api/students/1").with(csrf()))
+                .andExpect(status().isNoContent());
 
-        assertThat(response.getStatusCode().value()).isEqualTo(204);
         verify(service).deleteStudent(1L);
+    }
+
+    @Test
+    @WithMockUser(authorities = "student:read")
+    void delete_withOnlyReadPermission_returns403() throws Exception {
+        mockMvc.perform(delete("/api/students/1").with(csrf()))
+                .andExpect(status().isForbidden());
+
+        verify(service, never()).deleteStudent(any());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void delete_withAdminRoleButNoPermission_returns403() throws Exception {
+        mockMvc.perform(delete("/api/students/1").with(csrf()))
+                .andExpect(status().isForbidden());
     }
 }

@@ -24,7 +24,7 @@ public class AppUserDetailsService implements UserDetailsService {
 
         return User.withUsername(appUser.getEmail())
                 .password(appUser.getPassword())
-                .roles(appUser.getRole().name())   // adds the ROLE_ prefix for you
+                .authorities(appUser.getRole().getAuthorities())   // adds the ROLE_ prefix for you
                 .build();
     }
 }
